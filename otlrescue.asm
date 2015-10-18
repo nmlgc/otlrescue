@@ -124,6 +124,20 @@ stderr dd ?
 
 	.code
 
+fileop proc stdcall func:ptr, handle:HANDLE, buf:ptr, len:dword
+	local byte_ret:dword
+
+	lea eax, addr byte_ret
+	push 0
+	push eax
+	push len
+	push buf
+	push handle
+	call func
+	mov eax, [byte_ret]
+	cmp len, eax
+fileop endp
+
 wcslen proc uses ecx, edi string:LPWSTR
 	mov edi, string
 	mov ecx, -1
@@ -137,11 +151,8 @@ wcslen proc uses ecx, edi string:LPWSTR
 wcslen endp
 
 wfputs proc uses ecx, handle:HANDLE, string:LPWSTR
-	local byte_ret:dword
-
 	invoke wcslen, string
-	mov ecx, eax
-	invoke WriteConsoleW, handle, string, ecx, addr byte_ret, 0
+	invoke fileop, WriteConsoleW, handle, string, eax
 wfputs endp
 
 ; Separate function to not mess up the stack frame with the name allocation.
@@ -172,13 +183,12 @@ otlrescue proc uses esi, filename:LPWSTR
 	local otl_handle:HANDLE, otl_header:CANONHEADER
 	local bmp_handle:HANDLE, bmp_file:BITMAPFILEHEADER, bmp_info:BITMAPINFOHEADER
 	local row:ptr, row_len_padded:dword
-	local byte_ret:dword
 
 	invoke CreateFileW, filename, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0
 	mov [otl_handle], eax
 	; TODO: Error message, with format strings!
 
-	invoke ReadFile, [otl_handle], addr otl_header, sizeof CANONHEADER, addr byte_ret, 0
+	invoke fileop, ReadFile, [otl_handle], addr otl_header, sizeof CANONHEADER
 	; TODO: Error message, with format strings!
 
 	xor edx, edx
@@ -218,8 +228,8 @@ otlrescue proc uses esi, filename:LPWSTR
 	invoke otlrescue_open, filename
 	mov [bmp_handle], eax
 
-	invoke WriteFile, [bmp_handle], addr bmp_file, sizeof bmp_file, addr byte_ret, 0
-	invoke WriteFile, [bmp_handle], addr bmp_info, sizeof bmp_info, addr byte_ret, 0
+	invoke fileop, WriteFile, [bmp_handle], addr bmp_file, sizeof bmp_file
+	invoke fileop, WriteFile, [bmp_handle], addr bmp_info, sizeof bmp_info
 
 	invoke GetProcessHeap
 	invoke HeapAlloc, eax, 0, [row_len_padded]
@@ -229,7 +239,7 @@ otlrescue proc uses esi, filename:LPWSTR
 	mov ecx, [otl_header.chHeight]
 	@@rowloop:
 		push ecx
-		invoke ReadFile, [otl_handle], [row], [otl_header.chRowStride], addr byte_ret, 0
+		invoke fileop, ReadFile, [otl_handle], [row], [otl_header.chRowStride]
 
 		mov esi, [row] ; Row base pointer
 		.if [otl_header.chBytesPerPixel] == 3
@@ -245,7 +255,7 @@ otlrescue proc uses esi, filename:LPWSTR
 			inc ecx
 			.endw
 		.endif
-		invoke WriteFile, [bmp_handle], [row], [row_len_padded], addr byte_ret, 0
+		invoke fileop, WriteFile, [bmp_handle], [row], [row_len_padded]
 		pop ecx
 	loop @@rowloop
 
