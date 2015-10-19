@@ -26,6 +26,8 @@ STD_INPUT_HANDLE equ -10
 STD_OUTPUT_HANDLE equ -11
 STD_ERROR_HANDLE equ -12
 
+INVALID_HANDLE_VALUE equ -1
+
 ; CreateFile: dwDesiredAccess
 GENERIC_READ equ 80000000h
 GENERIC_WRITE equ 40000000h
@@ -116,6 +118,9 @@ wnstring output_ext, ".bmp", 0
 str_usage dw "Please pass one or more otl*.tmp files.", 0
 str_ellipsis dw "...", 0
 str_ok dw " OK", 0Ah, 0
+str_failed_notfound dw " file not found", 0Ah, 0
+str_failed_invalid dw " failed (not a Canon OTL temp file)", 0Ah, 0
+str_failed_outofmemory dw " failed (out of memory)", 0Ah, 0
 
 	.data?
 
@@ -180,16 +185,23 @@ otlrescue_open proc filename:LPWSTR
 otlrescue_open endp
 
 otlrescue proc uses esi, filename:LPWSTR
+	local retstr:LPWSTR
 	local otl_handle:HANDLE, otl_header:CANONHEADER
 	local bmp_handle:HANDLE, bmp_file:BITMAPFILEHEADER, bmp_info:BITMAPINFOHEADER
 	local row:ptr, row_len_padded:dword
 
 	invoke CreateFileW, filename, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0
+	.if eax == INVALID_HANDLE_VALUE
+		mov eax, addr str_failed_notfound
+		ret
+	.endif
 	mov [otl_handle], eax
-	; TODO: Error message, with format strings!
 
 	invoke fileop, ReadFile, [otl_handle], addr otl_header, sizeof CANONHEADER
-	; TODO: Error message, with format strings!
+	.if !ZERO?
+		mov retstr, addr str_failed_invalid
+		jmp @@close_otl
+	.endif
 
 	xor edx, edx
 	mov eax, [otl_header.chRowStride]
@@ -233,7 +245,10 @@ otlrescue proc uses esi, filename:LPWSTR
 
 	invoke GetProcessHeap
 	invoke HeapAlloc, eax, 0, [row_len_padded]
-	; TODO: Error checking!
+	.if eax == 0
+		mov eax, str_failed_outofmemory
+		ret
+	.endif
 	mov [row], eax
 
 	mov ecx, [otl_header.chHeight]
@@ -259,13 +274,15 @@ otlrescue proc uses esi, filename:LPWSTR
 		pop ecx
 	loop @@rowloop
 
-	invoke wfputs, [stdout], addr str_ok
-	mov eax, 0
+	mov retstr, addr str_ok
 
 	invoke GetProcessHeap
 	invoke HeapFree, eax, 0, [row]
 	invoke CloseHandle, [bmp_handle]
+
+@@close_otl:
 	invoke CloseHandle, [otl_handle]
+	mov eax, retstr
 otlrescue endp
 
 public main
@@ -295,6 +312,7 @@ main proc
 		invoke wfputs, [stdout], edi
 		invoke wfputs, [stdout], addr str_ellipsis
 		invoke otlrescue, edi
+		invoke wfputs, [stdout], eax
 	inc esi
 	.until esi == [argc]
 
